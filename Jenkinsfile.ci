@@ -1,0 +1,165 @@
+pipeline {
+    agent none
+
+    options {
+        timeout(time: 20, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+        timestamps()
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        PROJECT_ID = "q-gcp-00098-trell-snd-bx-26-04"
+        Q_PROJECT_ID = "q-gcp-40701-gke-images-23-10"
+        Q_REGION = "us"
+        REPO_NAME = "container-images-q-gcp-00098-trell-snd-bx-26-04"
+        IMAGE_BASE = "${Q_REGION}-docker.pkg.dev/${Q_PROJECT_ID}/${REPO_NAME}"
+
+        IMAGE_TAG = "ci-${BUILD_NUMBER}"
+        BACKEND_IMAGE = "${IMAGE_BASE}/backend:${IMAGE_TAG}"
+        FRONTEND_IMAGE = "${IMAGE_BASE}/frontend:${IMAGE_TAG}"
+    }
+
+    stages {
+        stage('Checkout Code') {
+            agent { label 'docker' }
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Validate Workspace and Tools') {
+            agent { label 'docker' }
+            steps {
+                sh '''
+                set -e
+
+                echo "Current workspace:"
+                pwd
+
+                echo "Repository files:"
+                ls -la
+
+                echo "Backend folder:"
+                ls -la backend
+
+                echo "Frontend folder:"
+                ls -la frontend
+
+                echo "Tool versions:"
+                whoami
+                git --version
+                docker --version
+                gcloud --version
+
+                echo "Active gcloud account:"
+                gcloud auth list
+
+                echo "Current GCP project:"
+                gcloud config get-value project
+                '''
+            }
+        }
+
+        stage('Configure Docker Auth') {
+            agent { label 'gcloud' }
+            steps {
+                sh '''
+                set -e
+
+                gcloud config set project "$PROJECT_ID"
+                gcloud auth configure-docker us-docker.pkg.dev -q
+                '''
+            }
+        }
+
+        stage('Build Docker Images') {
+            agent { label 'docker' }
+            steps {
+                sh '''
+                set -e
+
+                echo "Building backend image:"
+                echo "$BACKEND_IMAGE"
+                docker build --pull --no-cache -t "$BACKEND_IMAGE" ./backend
+
+                echo "Building frontend image:"
+                echo "$FRONTEND_IMAGE"
+                docker build --pull --no-cache -t "$FRONTEND_IMAGE" ./frontend
+                '''
+            }
+        }
+
+        stage('Vulnerability Scan') {
+            agent { label 'security' }
+            steps {
+                sh '''
+                set -e
+
+                echo "Scanning backend image with Trivy..."
+                docker run --rm \
+                  -v /var/run/docker.sock:/var/run/docker.sock \
+                  -v trivy-cache:/root/.cache/ \
+                  aquasec/trivy:latest image \
+                  --severity CRITICAL \
+                  --ignore-unfixed \
+                  --exit-code 1 \
+                  "$BACKEND_IMAGE"
+
+                echo "Scanning frontend image with Trivy..."
+                docker run --rm \
+                  -v /var/run/docker.sock:/var/run/docker.sock \
+                  -v trivy-cache:/root/.cache/ \
+                  aquasec/trivy:latest image \
+                  --severity CRITICAL \
+                  --ignore-unfixed \
+                  --exit-code 1 \
+                  "$FRONTEND_IMAGE"
+                '''
+            }
+        }
+
+        stage('Push Images to Artifact Registry') {
+            agent { label 'docker' }
+            steps {
+                sh '''
+                set -e
+
+                echo "Pushing backend image..."
+                docker push "$BACKEND_IMAGE"
+
+                echo "Pushing frontend image..."
+                docker push "$FRONTEND_IMAGE"
+                '''
+            }
+        }
+
+        stage('Print Image Paths') {
+            agent { label 'docker' }
+            steps {
+                sh '''
+                echo "Backend Image: $BACKEND_IMAGE"
+                echo "Frontend Image: $FRONTEND_IMAGE"
+                echo "Image Tag: $IMAGE_TAG"
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "CI pipeline completed successfully."
+            echo "Backend image: ${env.BACKEND_IMAGE}"
+            echo "Frontend image: ${env.FRONTEND_IMAGE}"
+        }
+
+        failure {
+            echo "CI pipeline failed. Check the failed stage above."
+        }
+
+        always {
+            cleanWs(deleteDirs: true, disableDeferredWipeout: true)
+        }
+    }
+}
