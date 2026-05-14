@@ -19,6 +19,8 @@ pipeline {
         IMAGE_TAG = "ci-${BUILD_NUMBER}"
         BACKEND_IMAGE = "${IMAGE_BASE}/backend:${IMAGE_TAG}"
         FRONTEND_IMAGE = "${IMAGE_BASE}/frontend:${IMAGE_TAG}"
+
+        USER_ACCOUNT = "ujjwal.aggarwal@quantiphi.com"
     }
 
     stages {
@@ -26,12 +28,22 @@ pipeline {
             agent { label 'docker' }
             steps {
                 checkout scm
+
+                sh '''
+                echo "Checkout completed."
+                pwd
+                ls -la
+                '''
+
+                stash name: 'source-code', includes: '**/*'
             }
         }
 
         stage('Validate Workspace and Tools') {
             agent { label 'docker' }
             steps {
+                unstash 'source-code'
+
                 sh '''
                 set -e
 
@@ -68,7 +80,13 @@ pipeline {
                 sh '''
                 set -e
 
-                gcloud config set project "$PROJECT_ID"
+                echo "Setting active gcloud account..."
+                gcloud config set account "$USER_ACCOUNT"
+
+                echo "Active gcloud account:"
+                gcloud auth list
+
+                echo "Configuring Docker authentication for Artifact Registry..."
                 gcloud auth configure-docker us-docker.pkg.dev -q
                 '''
             }
@@ -77,6 +95,8 @@ pipeline {
         stage('Build Docker Images') {
             agent { label 'docker' }
             steps {
+                unstash 'source-code'
+
                 sh '''
                 set -e
 
@@ -159,7 +179,9 @@ pipeline {
         }
 
         always {
-            cleanWs(deleteDirs: true, disableDeferredWipeout: true)
+            node('docker') {
+                cleanWs(deleteDirs: true, disableDeferredWipeout: true)
+            }
         }
     }
 }
