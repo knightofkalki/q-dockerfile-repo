@@ -7,7 +7,7 @@ pipeline {
         disableConcurrentBuilds()
         timestamps()
         skipDefaultCheckout(true)
-    }
+    } 
 
     environment {
         PROJECT_ID = "q-gcp-00098-trell-snd-bx-26-04"
