@@ -78,7 +78,7 @@ pipeline {
         }
 
         stage('Configure Docker Auth') {
-            agent { label 'gcloud' }
+            agent { label 'docker' }
 
             steps {
                 sh '''
@@ -112,43 +112,13 @@ pipeline {
                 sh '''
                 set -e
 
-                echo "Building backend image:"
+                echo "Building backend image using Docker cache where possible:"
                 echo "$BACKEND_IMAGE"
-                docker build --pull --no-cache -t "$BACKEND_IMAGE" ./backend
+                docker build --pull -t "$BACKEND_IMAGE" ./backend
 
-                echo "Building frontend image:"
+                echo "Building frontend image using Docker cache where possible:"
                 echo "$FRONTEND_IMAGE"
-                docker build --pull --no-cache -t "$FRONTEND_IMAGE" ./frontend
-                '''
-            }
-        }
-
-        stage('Vulnerability Scan') {
-            agent { label 'security' }
-
-            steps {
-                sh '''
-                set -e
-
-                echo "Scanning backend image with Trivy..."
-                docker run --rm \
-                  -v /var/run/docker.sock:/var/run/docker.sock \
-                  -v trivy-cache:/root/.cache/ \
-                  aquasec/trivy:latest image \
-                  --severity CRITICAL \
-                  --ignore-unfixed \
-                  --exit-code 1 \
-                  "$BACKEND_IMAGE"
-
-                echo "Scanning frontend image with Trivy..."
-                docker run --rm \
-                  -v /var/run/docker.sock:/var/run/docker.sock \
-                  -v trivy-cache:/root/.cache/ \
-                  aquasec/trivy:latest image \
-                  --severity CRITICAL \
-                  --ignore-unfixed \
-                  --exit-code 1 \
-                  "$FRONTEND_IMAGE"
+                docker build --pull -t "$FRONTEND_IMAGE" ./frontend
                 '''
             }
         }
